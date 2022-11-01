@@ -55,6 +55,11 @@ class Player {
 
 class Invader {
   constructor({position}) {
+    this.position = {
+      x: 0,
+      y: 0
+    };
+
     this.velocity = {
       x: 0,
       y: 0
@@ -219,11 +224,73 @@ class InvaderProjectile {
   }
 }
 
+class Bomb {
+  static radius = 30;
+  constructor({ position, velocity }) {
+    this.position = position;
+    this.velocity = velocity;
+    this.radius = 0;
+    this.color = 'red';
+    this.opacity = 1;
+    this.active = false;
+
+    gsap.to(this, {
+      radius: 30
+    });
+  }
+
+  draw() {
+    context.save();
+    context.globalAlpha = this.opacity;
+    context.beginPath();
+    context.arc(this.position.x, this.position.y, this.radius, 0, Math.PI * 2, false);
+    context.closePath();
+    context.fillStyle = this.color;
+    context.fill();
+    context.restore();
+  }
+
+  update() {
+    this.draw();
+    this.position.x += this.velocity.x;
+    this.position.y += this.velocity.y;
+
+    if (this.position.x + this.radius + this.velocity.x >= canvas.width ||
+      this.position.x - this.radius + this.velocity.x <= 0) {
+      this.velocity.x = -this.velocity.x;
+    } else if (this.position.y + this.radius + this.velocity.y >= canvas.height ||
+      this.position.y -this.radius + this.velocity.y <= 0) {
+      this.velocity.y = -this.velocity.y;
+    }
+  }
+
+  explode() {
+    this.active = true;
+    this.velocity.x = 0;
+    this.velocity.y = 0;
+    gsap.to(this, {
+      radius: 200,
+      color: 'white'
+    });
+
+    gsap.to(this, {
+      delay: 0.1,
+      opacity: 0,
+      duration: 0.15
+    });
+  }
+}
+
+function randomBetween(min, max) {
+  return Math.random() * (max - min) + min;
+}
+
 const player = new Player();
 const projectiles = [];
 const grids = [];
 const invaderProjectiles = [];
 const particles = [];
+const bombs = [];
 
 const keys = {
   a: {
@@ -279,11 +346,55 @@ function createParticles({object, color = '#BAA0DE', fades = true}) {
   }
 }
 
+function createScoreLabel({score = 100, object}) {
+  const scoreLabel = document.createElement('label');
+  scoreLabel.innerHTML = score;
+  scoreLabel.style.position = 'absolute';
+  scoreLabel.style.color = 'white';
+  scoreLabel.style.top = object.position.y + 'px';
+  scoreLabel.style.left = object.position.x + 'px';
+  scoreLabel.style.userSelect = 'none';
+  document.querySelector('#parentDiv').appendChild(scoreLabel);
+  // document.body.appendChild(scoreLabel);
+
+  gsap.to(scoreLabel, {
+    opacity: 0,
+    y: -30,
+    duration: 0.75,
+    onComplete: () => {
+      document.querySelector('#parentDiv').removeChild(scoreLabel);
+    }
+  });
+}
+
 function animate() {
   if (!game.active) return;
   window.requestAnimationFrame(animate);
   context.fillStyle = 'black';
   context.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (frames % 200 === 0 && bombs.length < 4) {
+    bombs.push(new Bomb({
+      position: {
+        x: randomBetween(Bomb.radius, canvas.width - Bomb.radius),
+        y: randomBetween(Bomb.radius, canvas.height - Bomb.radius),
+      },
+      velocity: {
+        x: (Math.random() - 0.5) * 6,
+        y: (Math.random() - 0.5) * 6
+      }
+    }));
+  }
+
+  for (let i = bombs.length - 1; i >= 0; i--) {
+    let bomb = bombs[i];
+
+    if (bomb.opacity <= 0) {
+      bombs.splice(i, 1);
+    }
+    bomb.update();
+  }
+
   player.update();
 
   for (let i = particles.length - 1; i >= 0; i--) {
@@ -335,6 +446,18 @@ function animate() {
   for (let i = projectiles.length - 1; i >= 0; i--) {
     let projectileIndex = i;
     let projectile = projectiles[i];
+
+    for (let j = bombs.length - 1; j >= 0; j--) {
+      let bomb = bombs[j];
+      let bombIndex = j;
+
+      // Projectile - bomb collision
+      if (Math.hypot(projectile.position.x - bomb.position.x, projectile.position.y - bomb.position.y) < projectile.radius + bomb.radius && !bomb.active) {
+        projectiles.splice(projectileIndex, 1);
+        bomb.explode();
+      }
+    }
+
     if (projectile.position.y + projectile.radius <= 0) {
       projectiles.splice(projectileIndex, 1);
     } else {
@@ -343,7 +466,9 @@ function animate() {
   };
 
   // Grids of enemies drawing
-  grids.forEach((grid, gridIndex) => {
+  for (let k = grids.length - 1; k >= 0; k--) {
+    let grid = grids[k];
+    let gridIndex = k;
     grid.update();
 
     // Spawn projectiles
@@ -351,8 +476,29 @@ function animate() {
       grid.invaders[Math.floor(Math.random() * grid.invaders.length)].shoot(invaderProjectiles);
     }
 
-    grid.invaders.forEach((invader, invaderIndex) => {
+    for (let i = grid.invaders.length - 1; i >= 0; i--) {
+      let invader = grid.invaders[i];
+      let invaderIndex = i;
       invader.update({velocity: grid.velocity});
+
+      for (let j = bombs.length - 1; j >= 0; j--) {
+        let bomb = bombs[j];
+        let bombIndex = j;
+
+        const invaderRadius = 15;
+        // Invader - bomb collision
+        if (Math.hypot(invader.position.x - bomb.position.x, invader.position.y - bomb.position.y) < invaderRadius + bomb.radius && bomb.active) {
+          grid.invaders.splice(invaderIndex, 1);
+          // Dynamic score labels
+          score += 50;
+          scoreEl.innerHTML = score;
+          createScoreLabel({score: 50, object: invader});
+          createParticles({
+            object: invader,
+            fades: true
+          });
+        }
+      }
 
       // Collision invader - projectile
       for (let i = projectiles.length - 1; i >= 0; i--) {
@@ -362,43 +508,43 @@ function animate() {
             projectile.position.x + projectile.radius >= invader.position.x &&
             projectile.position.x - projectile.radius <= invader.position.x + invader.width &&
             projectile.position.y + projectile.radius >= invader.position.y) {
+              const invaderFound = grid.invaders.find((invader2) => {
+                return invader2 === invader;
+              });
 
-              setTimeout(() => {
-                const invaderFound = grid.invaders.find((invader2) => {
-                  return invader2 === invader;
+              const projectileFound = projectiles.find((projectile2) => {
+                return projectile2 === projectile;
+              });
+
+              // remove invader and projectile
+              if (invaderFound && projectileFound) {
+                score += 100;
+                scoreEl.innerHTML = score;
+
+                // Dynamic score labels
+                createScoreLabel({object: invader});
+
+                createParticles({
+                  object: invader,
+                  fades: true
                 });
 
-                const projectileFound = projectiles.find((projectile2) => {
-                  return projectile2 === projectile;
-                });
+                grid.invaders.splice(invaderIndex, 1);
+                projectiles.splice(projectileIndex, 1);
 
-                // remove invader and projectile
-                if (invaderFound && projectileFound) {
-                  score += 100;
-                  scoreEl.innerHTML = score;
-
-                  createParticles({
-                    object: invader,
-                    fades: true
-                  });
-
-                  grid.invaders.splice(invaderIndex, 1);
-                  projectiles.splice(projectileIndex, 1);
-
-                  if (grid.invaders.length > 0) {
-                    let firstInvader = grid.invaders[0];
-                    let lastInvader = grid.invaders[grid.invaders.length - 1];
-                    grid.width = lastInvader.position.x - firstInvader.position.x + lastInvader.width;
-                    grid.position.x = firstInvader.position.x;
-                  } else {
-                    grids.splice(gridIndex, 1);
-                  }
+                if (grid.invaders.length > 0) {
+                  let firstInvader = grid.invaders[0];
+                  let lastInvader = grid.invaders[grid.invaders.length - 1];
+                  grid.width = lastInvader.position.x - firstInvader.position.x + lastInvader.width;
+                  grid.position.x = firstInvader.position.x;
+                } else {
+                  grids.splice(gridIndex, 1);
                 }
-              }, 0);
+              }
         }
       };
-    });
-  });
+    };
+  };
 
   if (keys.a.pressed && player.position.x >= 0) {
     player.velocity.x = -5;
